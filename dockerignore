@@ -1,0 +1,12 @@
+venv/
+.venv/
+saved_models/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.git/
+.gitignore
+*.log
+.idea/
+.vscode/
