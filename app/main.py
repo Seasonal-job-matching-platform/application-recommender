@@ -1,7 +1,18 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from app.recommender import recommend_applicants, recommend_talent
+from app.embedding_service import EmbeddingService
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app):
+    # Load the bi-encoder into memory BEFORE serving traffic, so the first
+    # real request is warm instead of paying the model-load cost.
+    EmbeddingService().encode("warmup")
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 @app.get("/recommend/applicants/{job_id}")

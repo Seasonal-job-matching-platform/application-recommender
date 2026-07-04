@@ -5,6 +5,9 @@ venv/
 # Saved models
 saved_models/
 
+# Bundled sentence-transformer model — must stay committed (no runtime download)
+!app/model_cache/
+
 # Python cache
 __pycache__/
 *.pyc

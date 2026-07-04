@@ -63,32 +63,26 @@ def overlap_count(list1, list2):
 
 
 # ----------------------------
-# Feature Builder
+# Text Builders (no encoding — encoding happens in the ranker so it can be batched)
 # ----------------------------
 
-def build_feature_vector(job, user, resume, application, embedding_service):
-
-    # ---- Normalize lists ----
+def build_job_text(job):
     job_requirements = normalize_list(job.get("requirements"))
     job_categories = normalize_list(job.get("categories"))
-
-    user_interests = normalize_list(user.get("fields_of_interest"))
-
-    resume_skills = normalize_list(resume.get("skills"))
-    resume_experience = normalize_list(resume.get("experience"))
-    resume_education = normalize_list(resume.get("education"))
-    resume_languages = normalize_list(resume.get("languages"))
-    resume_certificates = normalize_list(resume.get("certificates"))
-
-    # ---- Build semantic text blocks ----
-    job_text = " ".join([
+    return " ".join([
         clean_text(job.get("title")),
         clean_text(job.get("description")),
         " ".join(job_requirements),
         " ".join(job_categories),
     ])
 
-    candidate_text = " ".join([
+
+def build_candidate_text(resume, application):
+    resume_skills = normalize_list(resume.get("skills"))
+    resume_experience = normalize_list(resume.get("experience"))
+    resume_education = normalize_list(resume.get("education"))
+    resume_certificates = normalize_list(resume.get("certificates"))
+    return " ".join([
         " ".join(resume_skills),
         " ".join(resume_experience),
         " ".join(resume_education),
@@ -96,43 +90,62 @@ def build_feature_vector(job, user, resume, application, embedding_service):
         clean_text(application.get("describe_yourself")),
     ])
 
-    # ---- Semantic similarity ----
-    job_vec = embedding_service.encode(job_text)
-    cand_vec = embedding_service.encode(candidate_text)
 
-    semantic_sim = embedding_service.cosine_similarity(job_vec, cand_vec)
+def structured_features(job, user, resume):
+    job_requirements = normalize_list(job.get("requirements"))
+    job_categories = normalize_list(job.get("categories"))
+    user_interests = normalize_list(user.get("fields_of_interest"))
+    resume_skills = normalize_list(resume.get("skills"))
 
-    # ---- Structured overlaps ----
     skills_jaccard = jaccard_similarity(job_requirements, resume_skills)
     skills_overlap = overlap_count(job_requirements, resume_skills)
-
     category_overlap = jaccard_similarity(job_categories, user_interests)
 
-    # ---- Location logic ----
+    # NOTE: (x or "") because work_arrangement can be NULL in the database,
+    # which .get(..., "") does not protect against and would crash .upper().
     location_match = 0
-    if job.get("work_arrangement", "").upper() == "REMOTE":
+    if (job.get("work_arrangement") or "").upper() == "REMOTE":
         location_match = 1  # Remote jobs ignore country mismatch
-    else:
-        if job.get("location") == user.get("country"):
-            location_match = 1
+    elif job.get("location") == user.get("country"):
+        location_match = 1
+
+    return {
+        "skills_jaccard": skills_jaccard,
+        "skills_overlap": skills_overlap,
+        "category_overlap": category_overlap,
+        "location_match": location_match,
+    }
+
+
+# ----------------------------
+# Feature Builder (used by training/train_model.py for the XGBoost ranker)
+# ----------------------------
+
+def build_feature_vector(job, user, resume, application, embedding_service):
+
+    job_vec = embedding_service.encode(build_job_text(job))
+    cand_vec = embedding_service.encode(build_candidate_text(resume, application))
+    semantic_sim = embedding_service.cosine_similarity(job_vec, cand_vec)
+
+    feats = structured_features(job, user, resume)
 
     # ---- Richness signals ----
-    num_skills = len(resume_skills)
-    num_experience = len(resume_experience)
-    num_education = len(resume_education)
-    num_languages = len(resume_languages)
-    num_certificates = len(resume_certificates)
+    num_skills = len(normalize_list(resume.get("skills")))
+    num_experience = len(normalize_list(resume.get("experience")))
+    num_education = len(normalize_list(resume.get("education")))
+    num_languages = len(normalize_list(resume.get("languages")))
+    num_certificates = len(normalize_list(resume.get("certificates")))
 
     # ---- Final feature vector ----
     return np.array([
-        semantic_sim,          # 0
-        skills_jaccard,        # 1
-        skills_overlap,        # 2
-        category_overlap,      # 3
-        location_match,        # 4
-        num_skills,            # 5
-        num_experience,        # 6
-        num_education,         # 7
-        num_languages,         # 8
-        num_certificates       # 9
+        semantic_sim,                # 0
+        feats["skills_jaccard"],     # 1
+        feats["skills_overlap"],     # 2
+        feats["category_overlap"],   # 3
+        feats["location_match"],     # 4
+        num_skills,                  # 5
+        num_experience,              # 6
+        num_education,               # 7
+        num_languages,               # 8
+        num_certificates             # 9
     ])

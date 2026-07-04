@@ -1,6 +1,5 @@
 import numpy as np
 from app.embedding_service import EmbeddingService
-from app.feature_engineering import build_feature_vector
 
 
 class TalentRanker:
